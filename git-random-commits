@@ -1,0 +1,301 @@
+#!/bin/bash
+
+VERSION="0.0.1 20170531"
+DESCRIPTION="Utility to generate random commits in CURRENT Git repository"
+COPYRIGHT="GPLv3 - Diego Lago <diego.lago.gonzalez@gmail.com>"
+
+DRY_RUN=
+ONLY_GENERATE_FILE_NAMES=
+INIT_GIT=
+USE_DIRECTORIES=
+COMMIT_COUNT=1
+FILES_PER_COMMIT=1
+VERBOSE=
+BRANCH=
+
+COMMIT_RANDOM_MESSAGE_URL=https://whatthecommit.com/index.txt
+COMMIT_RANDOM_MESSAGE_FILE=
+
+FILENAMES=(main manager component controller action utils crypt build security sound driver
+           parser json xml view serializer icon system network config base dashboard login
+           widget vendor bootstrap highlight ajax core default store language loader writer
+           reader model test lint helper package notification navigator message router admin
+           setting environment module service about index home branch release project nav
+           timeline commit bar api http https user auth mock humans robots lock blocker url
+           www library lib sql database table tmp bin binary function procedure receiver
+           sender post pre merger chart reviewer task monitor detail feed schedule revert
+           kernel filter cache fixture requirement subversion git repository static dynamic
+           command group ignore import export watch compile launch daemon execute process
+           resolve option rebase automerge automatic clean install uninstall seed preseed
+           operation build update upgrade purge multibuild setup link issue maker tree file
+           path full empty daily weekly monthly yearly tag operate run kill freeze delete
+           remove undelete notify common report extension fleet mail infrastructure metrics
+           tool unlock degrade sandbox packager query agent status fast slow linux debug)
+
+FILENAMES_COUNT=${#FILENAMES[@]}
+
+EXTENSIONS=(.txt .h .c .hpp .cpp .d .py .rb .sh .s .md .pdf .csv .gif .jpg .svg .css .html
+            .php .js .png .so .pl .ttf .yaml .json .xml .log .am .in .mk .tar .gz .tar.gz
+            .m4 .go .asm .java .hxx .cxx .di .lib .ini .cfg .conf .pm .url .zip .ada .cc
+            .dtd .idl .lisp .o .obj .pas .res .ui .uml .dat .ac .dts .sys .rar .xz .boot
+            .S .doc .docx .xls .xlsx .ppt .pptx .ps .kt .kts .jsp .do .rss .cgi .atom .cs
+            .dtl .tcl .bcpl .r .sass .less .b .bf .lol .lols .mal .mb .bf .7z .snd .wav
+            .mp3 .aac .ogg .ogv .mkv .app .apk .cda .db2 .db3 .sqlite .raw .vob .info .nfo)
+
+EXTENSIONS_COUNT=${#EXTENSIONS[@]}
+
+USER_NAMES=(James David Christopher George Ronald John Richard Daniel Kenneth Antony Robert
+	        Charles Paul Steven Kevin Michael Joseph Mark Edward Jason William Thomas Donald
+	        Brian Jeff Mary Jennifer Lisa Sandra Michelle Patricia Maria Nancy Donna Laura
+	        Linda Susan Karen Carol Sarah Barbara Margaret Betty Ruth Kimberly Elisabeth
+	        Dorothy Helen Sharon Deborah)
+
+NAME_PATTERN="XNAMEX"
+UPPERNAME_PATTERN="XUPPERNAMEX"
+
+# TODO: Process XNUM([0-9,]*)X patterns
+NUM_PATTERN='XNUM([0-9,]*)X'
+
+function error() {
+	echo "ERROR: $1" 1>&2
+	exit $2
+}
+
+function verbose() {
+	if [ ! -z "$VERBOSE" ]; then
+		echo "$*" 1>&2
+	fi
+}
+
+function join_by() {
+	local IFS="$1"
+	shift
+	echo "$*"
+}
+
+function is_dry_run() {
+	test ! -z "$DRY_RUN"
+}
+
+function get_random_user_name() {
+	local c=${#USER_NAMES[@]}
+	local r=$((RANDOM % c))
+	echo ${USER_NAMES[$r]}
+}
+
+function get_random_commit_message_from_url() {
+	curl -s "$COMMIT_RANDOM_MESSAGE_URL"
+}
+
+function get_random_commit_message_from_file() {
+	local message_count=$(wc -l "$COMMIT_RANDOM_MESSAGE_FILE" | cut -d' ' -f1)
+	local r=$((RANDOM % message_count))
+	r=$((r+1))  # sed don't use a zero-based line index when accessing to files.
+	sed --quiet "${r}p" "$COMMIT_RANDOM_MESSAGE_FILE"
+}
+
+function get_random_commit_message() {
+	local username=$(get_random_user_name)
+	if [ ! -z "$COMMIT_RANDOM_MESSAGE_FILE" ]; then
+		get_random_commit_message_from_file | sed -e "s/XNAMEX/$username/" -e "s/XUPPERNAMEX/${username^^}/"
+	else
+		get_random_commit_message_from_url | sed -e "s/XNAMEX/$username/" -e "s/XUPPERNAMEX/${username^^}/"
+	fi
+	
+}
+
+function get_random_file_name() {
+	local r=$((RANDOM % FILENAMES_COUNT))
+	echo ${FILENAMES[$r]}
+}
+
+function get_random_extension() {
+	local r=$((RANDOM % EXTENSIONS_COUNT))
+	echo ${EXTENSIONS[$r]}
+}
+
+function construct_random_filename() {
+	local part_count_prob=(1 1 1 1 2 2 2 2 3 3)
+	local c=${#part_count_prob[@]}
+	local r=$((RANDOM % $c))
+	local parts=${part_count_prob[$r]}
+	local filenames=()
+	local dir=
+	for n in $(seq 1 $parts); do
+		if [ ! -z "$USE_DIRECTORIES" ]; then
+			dir="$(get_random_file_name)/"
+		fi
+		filenames+=($(get_random_file_name))
+	done
+	echo "$dir$(join_by '_' ${filenames[*]})$(get_random_extension)"
+}
+
+function show_file_names_and_extensions() {
+	echo "-----Base File Names-----"
+	echo ${FILENAMES[*]}
+	echo "-----Base Extensions-----"
+	echo ${EXTENSIONS[*]}
+}
+
+function show_help() {
+	cat <<EOF
+$(basename -- $0) -- $DESCRIPTION
+$COPYRIGHT
+Usage: $(basename -- $0) [options]
+Options:
+  -b BRANCH    Use BRANCH to commit (default is current branch; create if needed).
+  -d           Use random directories to create files.
+  -D           Dry run mode (do not commit).
+  -f FILE      Use FILE as the file where commit messages are loaded from.
+  -g           Only generate (and print) random file names.
+  -i           Init Git repository before making any commit.
+  -l           List file names and extensions used to generate random file names.
+  -n N         Generate N number of commits (default: $COMMIT_COUNT).
+  -N N         Use N files to create the commit (default: $FILES_PER_COMMIT).
+  -v           Be verbose.
+  -h           Show this help and exit.
+EOF
+}
+
+function process_options() {
+	while getopts ":b:f:ghidDln:N:v" opt; do
+		case "$opt" in
+			b)
+				BRANCH="$OPTARG"
+			;;
+			d)
+				USE_DIRECTORIES=yes
+			;;
+			D)
+				DRY_RUN=yes
+			;;
+			f)
+				COMMIT_RANDOM_MESSAGE_FILE="$OPTARG"
+			;;
+			g)
+				ONLY_GENERATE_FILE_NAMES=yes
+			;;
+			h)
+				show_help
+				exit 1
+			;;
+			i)
+				INIT_GIT=yes
+			;;
+			l)
+				show_file_names_and_extensions
+				exit 0
+			;;
+			n)
+				COMMIT_COUNT="$OPTARG"
+			;;
+			N)
+				FILES_PER_COMMIT="$OPTARG"
+			;;
+			v)
+				VERBOSE=yes
+			;;
+			\?)
+				error "Invalid option: -$OPTARG" 1
+			;;
+			:)
+				error "Option -$OPTARG requires an argument." 1
+			;;
+		esac
+	done
+}
+
+function check_options() {
+	# TODO: Check all options.
+	if [ ! -z "$COMMIT_RANDOM_MESSAGE_FILE" -a ! -f "$COMMIT_RANDOM_MESSAGE_FILE" ]; then
+		error "Random commit messages file is not found: $COMMIT_RANDOM_MESSAGE_FILE" 1
+	fi
+}
+
+function init_git_repository_if_requested() {
+	if [ ! -z "$INIT_GIT" ]; then
+		verbose " ! Initializing Git repository..."
+		if is_dry_run; then
+			echo "   git init"
+		else
+			git init
+		fi
+	fi
+}
+
+function generate_commit_and_make_the_commit() {
+	local filepath=
+	local commit_message=$(get_random_commit_message)
+	if is_dry_run; then
+		if [ ! -z "$BRANCH" ]; then
+			verbose " - Checkout branch $BRANCH..."
+			echo "   git checkout -b $BRANCH"
+		fi
+		for n in $(seq 1 $FILES_PER_COMMIT); do
+			filepath=$(construct_random_filename)
+			verbose " + Add file to commit: $filepath"
+			echo "   git add $filepath"
+		done
+		verbose " > Commiting with message \"$commit_message\"..."
+		echo "   git commit --message "\"$commit_message\"""
+	else
+		if [ ! -z "$BRANCH" ]; then
+			verbose "  - Checkout branch $BRANCH..."
+			git checkout -b "$BRANCH"
+		fi
+		for n in $(seq 1 $FILES_PER_COMMIT); do
+			filepath=$(construct_random_filename)
+			if ! mkdir -p $(dirname -- $filepath); then
+				error "Cannot create directory: $(dirname -- $filepath)" 1
+			fi
+			if ! touch $filepath; then
+				error "Cannot touch file: $filepath" 1
+			fi
+			if ! git add $filepath; then
+				error "Cannot add file to Git repository: $filepath" 1
+			fi
+			verbose " + Add file to commit: $filepath"
+		done
+		verbose " > Commiting with message '$commit_message'..."
+		if ! git commit --message "$commit_message"; then
+			error "Cannot commit in Git repository." 1
+		fi
+		if [ ! -z "$BRANCH" ]; then
+			git checkout -
+		fi
+	fi
+}
+
+function generate_random_filenames() {
+	for n in $(seq 1 $FILES_PER_COMMIT); do
+		construct_random_filename
+	done
+}
+
+function main() {
+	process_options	"$@"
+	shift $OPTIND
+	check_options
+	verbose "$(basename -- $0) $VERSION - $DESCRIPTION"
+	verbose "$COPYRIGHT"
+	if is_dry_run; then
+		verbose "*** DRY RUN Mode ***"
+	fi
+	if [ ! -z "$ONLY_GENERATE_FILE_NAMES" ]; then
+		generate_random_filenames
+	else
+		verbose "Creating $COMMIT_COUNT random commits..."
+		if [ -z "$COMMIT_RANDOM_MESSAGE_FILE" ]; then
+			verbose "Using '$COMMIT_RANDOM_MESSAGE_URL' to generate random commit messages."
+		else
+			verbose "Using '$COMMIT_RANDOM_MESSAGE_FILE' to generate random commit messages."
+		fi
+		init_git_repository_if_requested
+		for i in $(seq 1 $COMMIT_COUNT); do
+			generate_commit_and_make_the_commit
+		done
+	fi
+	verbose "Done."
+}
+
+main "$@"
